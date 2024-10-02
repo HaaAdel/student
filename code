@@ -1,0 +1,93 @@
+import os
+import re
+import PyPDF2
+import pdfplumber
+from pdf2image import convert_from_path
+from PIL import Image
+import pytesseract
+from reportlab.pdfgen import canvas
+
+def extract_section_titles(pdf_path):
+    titles = []
+    
+    # Извлечение изображений из PDF
+    images = convert_from_path(pdf_path)
+    
+    for image in images:
+        # Распознавание текста на каждом изображении
+        text = pytesseract.image_to_string(image)
+        
+        # Регулярное выражение для поиска заголовков (можно изменить по необходимости)
+        # Предполагаем, что заголовки начинаются с заглавной буквы и находятся на отдельной строке.
+        found_titles = re.findall(r'^(?!\d)([A-ZА-Я][^:]*)(?=\n)', text, re.MULTILINE)
+        titles.extend(found_titles)
+
+    return titles
+
+def create_pdf_with_contents(original_pdf_path, titles):
+    output_pdf_path = original_pdf_path
+    
+    # Создание PDF с оглавлением
+    temp_pdf_path = "temp.pdf"
+    c = canvas.Canvas(temp_pdf_path)
+    
+    # Заголовок
+    c.drawString(100, 800, 'Оглавление')
+    
+    # Добавляем заголовки
+    y_position = 750
+    for title in titles:
+        c.drawString(100, y_position, title)
+        y_position -= 20  # Сдвиг вниз
+    
+    c.save()
+    
+    # Объединяем оглавление с оригинальным PDF
+    with open(output_pdf_path, 'rb') as original_pdf_file:
+        with open(temp_pdf_path, 'rb') as toc_pdf_file:
+            original_pdf = PyPDF2.PdfFileReader(original_pdf_file)
+            toc_pdf = PyPDF2.PdfFileReader(toc_pdf_file)
+            
+            output_pdf = PyPDF2.PdfFileWriter()
+            
+            # Сначала добавляем оглавление
+            for page in range(toc_pdf.getNumPages()):
+                output_pdf.addPage(toc_pdf.getPage(page))
+            
+            # Затем добавляем оригинальный PDF
+            for page in range(original_pdf.getNumPages()):
+                output_pdf.addPage(original_pdf.getPage(page))
+                
+            with open(output_pdf_path, 'wb') as output_file:
+                output_pdf.write(output_file)
+
+def main():
+    toc_file_path = 'train/toc.txt'
+    toc_files = set()
+    
+    # Чтение содержимого toc.txt
+    with open(toc_file_path, 'r') as toc_file:
+        for line in toc_file:
+            file_info = line.strip().split(',')
+            if file_info:  
+                toc_files.add(file_info[0].strip())
+
+    # Проход по всем подпапкам и PDF-файлам
+    root_dir = 'train/'
+    for subdir, _, files in os.walk(root_dir):
+        for file in files:
+            if file.endswith('.pdf'):
+                pdf_path = os.path.join(subdir, file)
+                if pdf_path in toc_files:
+                    print(f"The file '{pdf_path}' is already in toc.txt. Skipping...")
+                    continue
+                
+                # Извлечение заголовков
+                section_titles = extract_section_titles(pdf_path)
+                
+                if section_titles:
+                    create_pdf_with_contents(pdf_path, section_titles)
+                    print(f"Updated '{pdf_path}' with content.")
+
+if __name__ == '__main__':
+    main()
